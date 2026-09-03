@@ -1,0 +1,6 @@
+data/raw/
+data/extracted/
+data/processed/
+runs/
+__pycache__/
+*.pyc

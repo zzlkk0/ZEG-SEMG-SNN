@@ -1,0 +1,164 @@
+[
+  {
+    "sample_index": 0,
+    "truth_id": 0,
+    "truth_label": "Rest",
+    "context_argmax": 1,
+    "hybrid_argmax": 0,
+    "context_correct": false,
+    "hybrid_correct": true
+  },
+  {
+    "sample_index": 44,
+    "truth_id": 1,
+    "truth_label": "Index flexion",
+    "context_argmax": 0,
+    "hybrid_argmax": 1,
+    "context_correct": false,
+    "hybrid_correct": true
+  },
+  {
+    "sample_index": 141,
+    "truth_id": 2,
+    "truth_label": "Index extension",
+    "context_argmax": 0,
+    "hybrid_argmax": 1,
+    "context_correct": false,
+    "hybrid_correct": false
+  },
+  {
+    "sample_index": 214,
+    "truth_id": 3,
+    "truth_label": "Middle flexion",
+    "context_argmax": 5,
+    "hybrid_argmax": 12,
+    "context_correct": false,
+    "hybrid_correct": false
+  },
+  {
+    "sample_index": 294,
+    "truth_id": 4,
+    "truth_label": "Middle extension",
+    "context_argmax": 0,
+    "hybrid_argmax": 0,
+    "context_correct": false,
+    "hybrid_correct": false
+  },
+  {
+    "sample_index": 377,
+    "truth_id": 5,
+    "truth_label": "Ring flexion",
+    "context_argmax": 5,
+    "hybrid_argmax": 5,
+    "context_correct": true,
+    "hybrid_correct": true
+  },
+  {
+    "sample_index": 458,
+    "truth_id": 6,
+    "truth_label": "Ring extension",
+    "context_argmax": 0,
+    "hybrid_argmax": 0,
+    "context_correct": false,
+    "hybrid_correct": false
+  },
+  {
+    "sample_index": 540,
+    "truth_id": 7,
+    "truth_label": "Little flexion",
+    "context_argmax": 0,
+    "hybrid_argmax": 5,
+    "context_correct": false,
+    "hybrid_correct": false
+  },
+  {
+    "sample_index": 626,
+    "truth_id": 8,
+    "truth_label": "Little extension",
+    "context_argmax": 0,
+    "hybrid_argmax": 0,
+    "context_correct": false,
+    "hybrid_correct": false
+  },
+  {
+    "sample_index": 720,
+    "truth_id": 9,
+    "truth_label": "Thumb adduction",
+    "context_argmax": 9,
+    "hybrid_argmax": 9,
+    "context_correct": true,
+    "hybrid_correct": true
+  },
+  {
+    "sample_index": 796,
+    "truth_id": 10,
+    "truth_label": "Thumb abduction",
+    "context_argmax": 12,
+    "hybrid_argmax": 12,
+    "context_correct": false,
+    "hybrid_correct": false
+  },
+  {
+    "sample_index": 870,
+    "truth_id": 11,
+    "truth_label": "Thumb flexion",
+    "context_argmax": 0,
+    "hybrid_argmax": 0,
+    "context_correct": false,
+    "hybrid_correct": false
+  },
+  {
+    "sample_index": 958,
+    "truth_id": 12,
+    "truth_label": "Thumb extension",
+    "context_argmax": 0,
+    "hybrid_argmax": 0,
+    "context_correct": false,
+    "hybrid_correct": false
+  },
+  {
+    "sample_index": 45,
+    "truth_id": 1,
+    "truth_label": "Index flexion",
+    "context_argmax": 0,
+    "hybrid_argmax": 1,
+    "context_correct": false,
+    "hybrid_correct": true
+  },
+  {
+    "sample_index": 46,
+    "truth_id": 1,
+    "truth_label": "Index flexion",
+    "context_argmax": 0,
+    "hybrid_argmax": 1,
+    "context_correct": false,
+    "hybrid_correct": true
+  },
+  {
+    "sample_index": 47,
+    "truth_id": 1,
+    "truth_label": "Index flexion",
+    "context_argmax": 1,
+    "hybrid_argmax": 1,
+    "context_correct": true,
+    "hybrid_correct": true
+  },
+  {
+    "sample_index": 48,
+    "truth_id": 1,
+    "truth_label": "Index flexion",
+    "context_argmax": 1,
+    "hybrid_argmax": 1,
+    "context_correct": true,
+    "hybrid_correct": true
+  },
+  {
+    "sample_index": 49,
+    "truth_id": 1,
+    "truth_label": "Index flexion",
+    "context_argmax": 1,
+    "hybrid_argmax": 1,
+    "context_correct": true,
+    "hybrid_correct": true
+  }
+]

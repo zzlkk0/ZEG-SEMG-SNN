@@ -1,0 +1,58 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+credentials.json
+secrets.*
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Datasets and experiment output
+**/data/
+**/runs/
+**/weights/
+**/weights_hw/*.npz
+**/weights_hw/*.npy
+**/weights_hw/*.bin
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.npz
+*.npy
+*.mat
+*.h5
+*.hdf5
+
+# FPGA build products
+*.bit
+*.bin
+*.ltx
+*.xsa
+*.xpr
+*.jou
+*.str
+*.wdb
+*.log
+.Xil/
+**/vivado/build/
+**/hls/build/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
