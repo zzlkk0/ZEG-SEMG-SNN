@@ -1,172 +1,97 @@
-# 08. 资源估算与部署清单:诚实地回答"能不能放进去"
+# 08. Resource Estimation and Deployment Checklist
 
-这是最后一章,主题是工程诚信而不是新技术:**在没有真正跑综合工具之前,
-哪些资源数字你可以计算出来、哪些只能定性推理、哪些绝对不能瞎编**。
+The question "will it fit?" has several different answers. Weight memory can be calculated exactly from tensor shapes and bit widths. LUT, FF, DSP, routing, clock frequency, and latency require synthesis or implementation because scheduling and architecture dominate them.
 
-## 8.1 算子清单(Operator Inventory):先确认"贵"的算子真的都清除了
+## 8.1 Operator inventory
 
-部署前的第一道检查,不是算资源,而是列一张表,逐项确认 05 章点名的每一种昂贵浮点算子
-是否已经被替换干净:
-
-| 原始算子 | 替换方案 | 状态 |
+| Original operator | Hardware-oriented form | Status |
 |---|---|---|
-| GELU(`erf`) | ReLU6 | ✅ 无浮点超越函数 |
-| LayerNorm(均值/方差/`sqrt`) | HWAffine(数据无关仿射,可折叠) | ✅ 无在线统计量计算 |
-| BatchNorm(推理态) | 折叠进前一层卷积权重 | ✅ 不再是独立算子 |
-| Softmax(`exp` + 除法) | 保留在 FPGA 之外(host 端做) | ✅ FPGA 只输出 logits/脉冲计数 |
-| 运行时除法(如注意力归一化) | 整数索引查找表(LUT) | ✅ 无除法器 |
+| GELU / `erf` | ReLU6 | no transcendental function |
+| LayerNorm | data-independent `HWAffine` | no online mean, variance, square root, or division |
+| inference BatchNorm | folded into convolution/linear constants | no independent BatchNorm datapath |
+| Softmax | host-side | FPGA returns logits or spike counts |
+| attention division | integer reciprocal lookup table | no runtime divider |
 
-这张表能写出来、每一项都能对应到具体代码位置,是"这个设计原则上具备可综合性"的
-**最基本前提**——但注意,这只是"原则上没有明显会导致综合失败的浮点算子了",
-不等于"资源一定够用"、更不等于"时序一定收敛"。这两件事需要下面的估算,以及最终真正的综合。
+Search the exported graph and HLS/RTL source as well as the PyTorch model. An operator removed from one representation may still survive in another.
 
-> 一个务实的选择:Softmax 不需要上板。分类任务最终只需要 argmax,而 argmax(softmax(x))
-> == argmax(x)——softmax 是单调变换,不改变排序。所以 FPGA 只要把原始 logits(或者
-> 脉冲计数)通过 UART/其他接口传给主机,由主机(如果确实需要概率值,比如做后续的
-> 置信度融合)在软件里做 softmax 即可。这是"哪些计算必须上板、哪些可以留在主机端"
-> 这一更大权衡的一个具体例子。
-</br>
-
-## 8.2 能算准的数字:权重占用的存储空间
-
-INT4/INT8 权重的总字节数是可以精确计算的——这是唯一一类**不需要跑任何综合工具**
-就能给出硬数字的资源估算,因为它只取决于你已经导出的 `.npz` 文件里数组的形状和 dtype。
-
-**但这里有一个很容易踩的坑**:`.npz` 里的 INT4 codes 数组,dtype 用的是 `int8`——
-numpy 没有原生的 4 位整数类型,只能借用 8 位的 `int8` 容器存,**每个值浪费了一半空间**。
-直接对 `.npz` 文件算字节数,得到的是"这份数据按 numpy 默认格式存在磁盘上有多大",
-不是"硬件里真正需要多少存储"——真实的 BRAM 会把两个 INT4 值紧凑打包进一个字节。
-如果不做这个换算,算出来的占用率会偏大接近一倍,可能把一个明明装得下的设计误判成
-"资源超限":
+## 8.2 Exact weight-memory calculation
 
 ```python
-import numpy as np
+from math import ceil
 
-def estimate_weight_storage(npz_path: str) -> dict:
-    """区分“npz 磁盘字节数”和“硬件 4-bit 紧凑打包后的字节数”,后者才该拿去和 BRAM 预算比较。"""
-    with np.load(npz_path) as archive:
-        raw_bytes, packed_bytes, breakdown = 0, 0, {}
-        for key in archive.files:
-            arr = archive[key]
-            if not (key.endswith("_codes") or key.endswith("_scale") or key.endswith("_bias")):
-                continue
-            raw_bytes += arr.nbytes
-            # INT4 codes(逐输出通道权重)可以两个值紧凑打包进一个字节;
-            # HWAffine 的 INT8 codes、float32 的 scale/bias 不需要(也不能)再打包。
-            is_int4_codes = key.endswith("_codes") and "affine" not in key
-            packed_bytes += arr.nbytes / 2 if is_int4_codes else arr.nbytes
-            breakdown[key] = arr.nbytes
-    return {
-        "raw_kib": raw_bytes / 1024,
-        "packed_kib": packed_bytes / 1024,
-        "breakdown": breakdown,
-    }
+def tensor_storage_bytes(shape, bits):
+    elements = 1
+    for dimension in shape:
+        elements *= dimension
+    return ceil(elements * bits / 8)
 
-result = estimate_weight_storage("hw_model_fixed.npz")
-print(f"npz 磁盘字节数: {result['raw_kib']:.1f} KiB")
-print(f"硬件 4-bit 紧凑打包后: {result['packed_kib']:.1f} KiB")
+tensors = [
+    ("fc1", (256, 96), 4),
+    ("fc2", (128, 256), 4),
+    ("out", (13, 128), 4),
+]
+
+total = sum(tensor_storage_bytes(shape, bits) for _, shape, bits in tensors)
+print(total, "bytes")
 ```
 
-有了这个"硬件紧凑打包后"的字节数,才能和目标芯片的 BRAM 总容量做有意义的比较:
+Convert bytes to BRAM tiles only after accounting for port width, depth, fragmentation, double buffering, and whether scale/bias tables share a memory. A theoretical bit total is a lower bound, not a placed-memory count.
 
-```python
-BOARD_BRAM_KIB = 607.5   # 例如 Nexys4 DDR (XC7A100T) 的片上 BRAM 总容量,查芯片数据手册得到
-usage_pct = result["packed_kib"] / BOARD_BRAM_KIB * 100
-print(f"BRAM occupancy from weights alone: {usage_pct:.1f}%")
-```
+For the QAT Context + Hybrid package in this project, stored model data total approximately 353.3 KiB: 162.5 KiB for Context and 190.8 KiB for Hybrid. That is about 58% of the XC7A100T's raw BRAM capacity before layout inefficiency and buffers.
 
-这个数字是**真实的、可以在报告里理直气壮写出来的**——因为它只是"字节数除以字节数"
-再加一个明确写清楚前提的打包假设,不涉及任何猜测。如果这个百分比已经逼近 100%,
-不需要等综合工具跑完,你就已经知道现在的位宽/模型规模装不下,得回去做 08.4 节讨论的取舍。
+## 8.3 What cannot be inferred reliably from parameter count
 
-> 这个"两种字节数容易混淆"的坑不是假设出来的——在给这套课程配套的真实项目案例
-> notebook 里,第一版资源估算代码就直接用了 npz 磁盘字节数,算出来的占用率几乎是
-> 正确值的两倍。写资源估算代码时,养成习惯:字节数算出来之后,想一句"这个数字对应
-> 的存储格式,和硬件里实际的存储格式是不是同一件事"。
+- LUT use depends on arithmetic widths, control, multiplexing, unrolling, and routing.
+- DSP use depends on whether multiplies are parallel, time-multiplexed, constant-folded, or implemented in LUTs.
+- FF use depends on pipeline depth and the amount of live state.
+- BRAM use depends on banking and port requirements, not only total bits.
+- clock frequency requires post-route timing.
+- latency requires the scheduled architecture and measured cycle count.
 
-## 8.3 只能定性推理的数字:LUT / DSP / FF
+Use analytical estimates to reject obviously impossible designs. Use HLS synthesis, RTL synthesis, place-and-route, and board measurements for claims.
 
-和 BRAM 不同,LUT、DSP、FF 的实际占用**没有一个简单的闭式公式**——它们取决于:
+## 8.4 Resource-reduction controls
 
-- 综合工具(Vivado/Vitis HLS)具体怎么把一个乘加操作映射成 DSP48 硬核还是 LUT 拼出来的乘法器
-- 流水线深度、并行度的设计选择(同一个算法,完全流水线展开 vs 时分复用一套硬件资源,
-  资源占用可以差好几倍)
-- 位宽降低带来的收益不是线性的——INT4 乘法器不是 FP32 乘法器的 1/8 大小,
-  但确实比 FP32 小得多(乘法器面积大致和位宽的平方相关,所以 INT4 相对 FP32
-  在乘法器这一项上有数量级的收益,但整个系统还包含大量非乘法逻辑,不能简单套用这个比例）
+If a design does not fit, consider:
 
-**能负责任地说的话**,大致是这个级别:
+1. lower weight or activation precision after a QAT ablation
+2. smaller hidden dimensions or fewer simulation steps
+3. reuse one compute engine across layers or branches
+4. gated accumulation for binary spikes
+5. streamed weights when latency and external-memory bandwidth permit it
+6. removal of a branch whose marginal fusion gain is small
+7. narrower accumulators justified by measured ranges
 
-> "把权重从 FP32 降到 INT4、把激活从 FP32 降到 Q8.8、去掉所有超越函数和运行时除法,
-> 相比原始浮点设计,LUT 和 DSP 占用预期会有数量级的下降——因为浮点乘加器、
-> `erf`/`exp` 多项式展开、在线除法器本身就是大 LUT 消耗大户,而这些现在都不存在了。
-> 但具体降到多少、是否能放进目标芯片、时序能不能收敛在目标频率,**没有实际跑
-> Vitis HLS 的 C 综合报告(csynth report)和 Vivado 的布局布线(implementation)报告,
-> 不能给出确切数字。**"
+Every change trades accuracy, latency, bandwidth, or implementation complexity. Re-evaluate the independent test set only after selecting the design on validation data.
 
-**不能做的事**:不要因为"看起来应该会降很多"就编一个具体的百分比数字放进报告
-(比如"预计 LUT 占用 15%")。这种数字一旦被别人拿去做决策(比如"那我们再加一个分支
-好了,反正还有富余"),而实际综合结果差很多,后果比"暂时没有这个数字"更糟。
+## 8.5 End-to-end deployment checklist
 
-## 8.4 如果资源不够,可以调整的旋钮
+- [ ] freeze preprocessing and input layout
+- [ ] freeze model topology, quantization, rounding, overflow, and reset rules
+- [ ] export versioned weights and manifest
+- [ ] pass NumPy versus QAT comparisons
+- [ ] create representative golden vectors
+- [ ] pass HLS C simulation or RTL simulation bit-exactly
+- [ ] synthesize and review LUT, FF, BRAM, DSP, and inferred operators
+- [ ] implement and close timing at the target clock
+- [ ] measure cycles and end-to-end latency
+- [ ] test the same golden vectors on the board
+- [ ] run a larger board sample and compare classes with NumPy
+- [ ] document host-side softmax, fusion, and calibration
+- [ ] label all numbers as calculated, synthesized, implemented, or measured
 
-真正跑综合之前想清楚这些选项,能在"设计-综合"的迭代循环里少走弯路:
+## 8.6 Evidence boundaries
 
-1. **降低权重位宽**:INT4 → INT3/INT2,配合 06 章的 QAT 继续微调找回精度。
-   通常每降一档位宽,乘法器/LUT 占用会有明显下降,但精度损失曲线是非线性的——
-   INT4→INT3 可能只掉 1~2 个百分点,INT3→INT2 可能断崖式下跌,需要实测。
-2. **减少并行分支数**:04 章讲的多分支融合,如果三个分支放不下,可以先上两个分支
-   (通常挑资源最省、边际精度贡献最大的组合),牺牲一点精度换取能先跑起来。
-3. **逐层差异化位宽**:不是所有层都同等重要——如果综合报告显示某一层是资源热点,
-   可以只把那一层单独降位宽重新 QAT,而不是全局统一降。
-4. **利用脉冲的稀疏性**:这是一个本课程没有展开实现、但值得知道的方向——
-   脉冲输入是二值的(0 或 1),很多"乘法"其实是"乘以 0 或 1",本质上是门控加法,
-   不需要真正的乘法器。如果 HLS/RTL 实现能利用这一点(脉冲为 0 时直接跳过对应的加法,
-   而不是老老实实算一次乘 0),可以进一步大幅降低资源占用和功耗——这通常需要在
-   RTL/HLS 层面专门设计,不是简单在算法层面能自动获得的。
+Use precise language:
 
-## 8.5 从"数字模型"到"真正跑在开发板上",完整清单
+- "calculated weight size" for byte arithmetic
+- "HLS estimate" for pre-RTL tool reports
+- "post-synthesis utilization" after synthesis
+- "post-implementation timing" after placement and routing
+- "board-measured latency/accuracy/power" only after physical measurement
 
-写到这里,你手上的产出物是:训练好的 QAT 权重、numpy 定点参考实现、黄金测试向量、
-算子清单、一个精确的 BRAM 占用数字、一段关于 LUT/DSP 的定性判断。距离"真正跑在板子上",
-还有这些步骤,每一步都可能反过来要求你回到前面章节调整设计:
+Do not describe an estimate as proof that a model fits or meets timing.
 
-- [ ] 把 numpy 参考实现翻译成可综合的 HLS C++(或直接手写 RTL),逐个算子对照 07 章的
-      黄金向量做仿真验证
-- [ ] 跑 Vitis HLS 的 C 综合(csynth),拿到第一份**真实的**资源估算报告
-- [ ] 如果 csynth 报告显示超预算,回到 8.4 节的选项调整,重新 QAT、重新导出、重新综合
-      (这是一个迭代循环,通常要走好几轮)
-- [ ] 跑 Vivado 的综合(synthesis)+ 实现(implementation),确认布局布线(place & route)
-      能收敛,时序(timing closure)满足目标频率
-- [ ] 生成比特流(bitstream),烧录到真实开发板
-- [ ] 用真实的传感器/ADC 数据(而不是仿真数据)跑一遍端到端回归测试,
-      并用黄金测试向量做逐样本比对,确认硬件行为和 numpy 参考实现一致
-- [ ] 测量真实功耗、真实延迟,和设计目标做对比
+## 8.7 Course summary
 
-## 8.6 贯穿全课程的一条原则,再强调一次
-
-> **报告里的每一个数字,都应该能让别人问"这个数字是怎么来的"时,你能诚实地回答
-> "这是从 XX 文件的 YY 计算得到的精确值"或者"这是基于 ZZ 原理的定性判断,
-> 具体数字需要跑 WW 工具才能确认"——而不是含糊地说"应该差不多"。**
-
-这一点在硬件项目里尤其重要,因为资源预算错误的代价通常不是"重新跑一次训练"那么轻,
-而是"布局布线跑了几个小时最后失败,回头才发现两个月前的估算就是编的"。
-
-## 8.7 课程总结
-
-回顾整个学习路径:
-
-1. **01~03**:从单个 LIF 神经元,到能训练、有工程完整性(早停/梯度裁剪/验证集选模型)
-   的多层 SNN
-2. **04**:从"单个模型"升级到"多分支并行 + 验证集网格搜索融合权重"的系统设计
-3. **05~06**:理解为什么浮点算子在 FPGA 上是灾难,系统性地替换成硬件友好等价物,
-   用量化感知训练找回精度(以及一个关于"如何验证量化真的生效"的真实踩坑案例)
-4. **07**:导出真正的定点权重,写一份独立于训练框架的 numpy 参考实现,交叉验证一致性,
-   准备黄金测试向量
-5. **08**:诚实地区分"能精确算出的资源数字"和"只能定性判断的资源数字",列出真正
-   部署到硬件之前还剩的步骤
-
-这套流程不是 SNN 独有的——同样的方法论(QAT、算子替换、numpy/C++ 参考实现验证、
-诚实的资源估算)适用于任何"训练好一个浮点模型,要把它塞进资源受限硬件"的场景。
-
-祝你部署顺利。
+You have followed the complete path from LIF dynamics and surrogate-gradient training through multi-branch fusion, hardware-oriented QAT, integer export, NumPy verification, and deployment planning. The durable workflow is to co-design the model and hardware, validate every numerical transformation, and preserve an honest boundary between software accuracy and implemented hardware evidence.

@@ -1,13 +1,16 @@
 # Security
 
-不要通过 Issue、Pull Request、Notebook 输出或配置文件提交以下内容：
+Do not submit any of the following through issues, pull requests, notebook
+outputs, or configuration files:
 
-- GitHub Personal Access Token、API key、SSH 私钥或密码；
-- 本机用户名、绝对路径和内部网络地址；
-- 未获授权的受试者数据或设备标识；
-- 私有 checkpoint、商业数据或受限制的数据集副本。
+- GitHub personal access tokens, API keys, SSH private keys, or passwords;
+- local usernames, absolute paths, or internal network addresses;
+- participant data or device identifiers without explicit authorization;
+- private checkpoints, commercial data, or restricted dataset copies.
 
-若凭据曾出现在聊天、终端历史或提交中，应立即在对应平台撤销并重新生成。
-仅从 Git 历史中删除字符串并不能使已经泄露的凭据恢复安全。
+If a credential appears in chat, shell history, or a commit, revoke and replace
+it immediately. Removing the text from Git history does not make an exposed
+credential safe again.
 
-发现安全问题时，请通过仓库所有者提供的私密联系方式报告，不要公开披露有效凭据。
+Report security concerns through a private contact method supplied by the
+repository owner. Do not disclose active credentials in a public issue.

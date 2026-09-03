@@ -1,105 +1,69 @@
-# 05. 为什么要量化:浮点模型和 FPGA 之间的鸿沟
+# 05. Why Quantization Is Necessary
 
-这一章不写代码,先把概念和动机讲清楚——06~08 章的所有工程决定都是从这里推出来的。
+## 5.1 Why use an FPGA?
 
-## 5.1 为什么要上 FPGA,而不是继续用 CPU/GPU 跑
+SNNs use binary, often sparse events. An FPGA can exploit that structure with gated accumulation, predictable latency, and low power. This is attractive for wearable or edge sEMG recognition, but a small FPGA has strict compute and on-chip-memory limits.
 
-SNN 天然是事件驱动、二值脉冲的计算模型,这和 FPGA/专用芯片的优势高度吻合:
-低功耗、可预测的低延迟、脉冲为 0 时大量运算可以直接跳过("门控"而不是"计算再丢弃")。
-一块几十美元的小型开发板(比如 Xilinx Artix-7 系列的 Nexys4 DDR)理论上就能做到
-比同等算力的 CPU 低一个数量级的功耗,这对可穿戴/边缘设备(比如实时肌电手势识别)很有意义。
+## 5.2 The FPGA resource ledger
 
-但这块板子的资源是"小"的——这正是这一章要展开的问题。
-
-## 5.2 FPGA 的资源账本:LUT / FF / BRAM / DSP
-
-FPGA 不是"一个通用处理器",而是一堆可编程逻辑单元拼出来的电路。做资源预算至少要认识四种资源:
-
-| 资源 | 是什么 | 谁在消耗它 |
+| Resource | Purpose | Typical consumers |
 |---|---|---|
-| **LUT**(查找表) | 最基本的组合逻辑单元,几乎所有运算最终都会占用一部分 LUT | 加法器、比较器、移位器、复杂函数的展开逻辑 |
-| **FF**(触发器) | 存一位状态(寄存器) | 流水线级数、状态机、每一拍要保持的数值 |
-| **BRAM**(块内存) | 片上专用存储块,一块通常是几十 Kb | 权重表、查找表(LUT-based 函数表)、缓冲区 |
-| **DSP**(数字信号处理单元) | 硬布线的乘加器,比用 LUT 拼乘法器高效得多 | 乘法密集的运算,比如卷积、矩阵乘 |
+| LUT | combinational logic | adders, comparators, shifts, control, approximations |
+| FF | registered state | pipelines, state machines, membrane values |
+| BRAM | on-chip memory | weights, lookup tables, buffers |
+| DSP | hard multiply-accumulate | dense matrix and convolution products |
 
-以 Nexys4 DDR 板上的 XC7A100T 芯片为例,大致资源量级是: LUT 约 6.3 万个、
-BRAM 总量约 600KiB 出头、DSP 约 240 个——这些数字**在同类芯片里已经算入门级**,
-一个直接从 PyTorch 浮点模型"照搬"过来的网络,大概率会在这些数字面前碰壁。
+The XC7A100T on Nexys4 DDR provides about 63.4k LUTs, 135 BRAM tiles, and 240 DSP blocks. A direct floating-point translation of a PyTorch graph can exhaust these resources quickly.
 
-## 5.3 具体是怎么碰壁的:浮点算子的真实成本
+## 5.3 Expensive floating-point operators
 
-在 CPU/GPU 上,`GELU`、`LayerNorm`、`Softmax`、浮点除法这些操作"看起来都一样便宜"——
-一行 PyTorch 代码,一次前向。但在 FPGA 上,它们的成本完全不是一个量级:
-
-| 算子 | 为什么贵 |
+| Operator | Hardware cost |
 |---|---|
-| **GELU**(用到 `erf`) | 误差函数没有闭式的组合逻辑实现,通常要用多项式逼近或查找表展开,占用大量 LUT 才能达到可用精度 |
-| **LayerNorm** | 需要在线计算均值、方差,然后做 `1/sqrt(var+eps)`——**除法和开方都是数据依赖的**,每个样本、每次前向都要重新算一遍,没法预先算好烧到电路里 |
-| **Softmax** | 需要 `exp`(通常又是多项式/查找表逼近)加一次**除法**做归一化 |
-| **通用浮点除法** | 综合工具展开出来的除法器本身就比乘法器贵得多,如果除数是运行时才知道的变量(不是编译期常数),更没法优化 |
+| GELU / `erf` | polynomial or table approximation and substantial control logic |
+| LayerNorm | online mean, variance, reciprocal square root, and division |
+| Softmax | exponentials and normalization division |
+| runtime division | a large variable-latency or deeply pipelined datapath |
 
-**一个真实的踩坑数据**:某个 91% 精度的三分支 sEMG 模型,直接按原始浮点结构去做资源估算,
-LUT 占用率高达 98.6%,Vivado 布局阶段直接失败(Placer 报错,放不下)。
-问题不是"模型太大",而是"这几类浮点算子,每一处都在偷偷吃掉大量 LUT"。
+In this project, a floating-point three-branch implementation used 62,531 of 63,400 LUTs (98.6%) and failed placement. The lesson is that operator choice can dominate parameter count.
 
-## 5.4 两条路:训练后量化(PTQ) vs 量化感知训练(QAT)
+## 5.4 PTQ versus QAT
 
-要解决上面的问题,核心思路是**把网络里所有算子换成定点/整数版本**。但"换算子"到底怎么做:
+- Post-training quantization (PTQ) rounds a trained model without further optimization. It is simple but can lose substantial accuracy at INT4.
+- Quantization-aware training (QAT) applies fake quantization in the forward pass and uses an STE in the backward pass. Starting from an FP32 checkpoint and fine-tuning for a few epochs lets the model adapt to the quantization error.
 
-- **PTQ(Post-Training Quantization,训练后量化)**:训练完浮点模型后,直接把权重和激活
-  round 到低精度网格,不重新训练。实现简单,但精度损失通常较大,尤其是位宽降到 INT4
-  这种激进程度时,精度可能掉到无法接受。
-- **QAT(Quantization-Aware Training,量化感知训练)**:训练过程中就让网络"看到"量化引入的
-  误差(用 01 章讲过的替代梯度/STE 技巧:前向按量化后的定点值算,反向梯度直通),
-  让网络自己学着在这种精度损失下找到还不错的参数。**代价是要重新训练(通常是从已有浮点
-  checkpoint 热启动,微调几个 epoch,而不是从零训练)**,收益是精度损失能显著收窄。
+The project's INT4-weight, Q8.8-activation QAT system reached 91.11% after fusion, compared with 91.10% for the original FP32 fusion. This is an observed project result, not a general guarantee that quantization improves accuracy.
 
-一个经验数据:INT4 权重 + Q8.8 定点激活的量化感知训练,配合下一章要讲的算子替换,
-最终三分支融合精度做到了 91.11%——**不仅没有明显掉点,甚至反超了原始浮点基线(91.10%)**。
-这说明只要方法对,"整数化"不等于"必然掉精度"。
+## 5.5 Fixed-point notation
 
-## 5.5 定点数表示法速览:Qm.n
+In this repository, Q8.8 means a signed value with eight fractional bits:
 
-后面章节反复出现的记号是 `Qm.n`(比如 Q8.8):表示用 `m` 位整数部分 + `n` 位小数部分
-表示一个定点数,总共 `m+n` 位(通常还有 1 位符号位)。举例,Q8.8:
-
+```text
+real_value = integer_code / 256
+resolution = 1 / 256 = 0.00390625
 ```
-真实值 = 整数编码 / 2^8
-步长(最小分辨率) = 1 / 256 ≈ 0.0039
-可表示范围(有符号) ≈ ±128.0
-```
-
-量化一个浮点数到 Qm.n,就是"除以步长、四舍五入、限幅"三步:
 
 ```python
-def to_fixed_point(x, frac_bits=8, int_bits=8):
-    step = 2.0 ** (-frac_bits)
-    limit = 2 ** (int_bits + frac_bits - 1) - 1
-    code = round(x / step)
-    code = max(-limit - 1, min(limit, code))
-    return code * step   # 量化后的浮点值(硬件里实际存的是 code 这个整数)
+def quantize_fixed(x, fractional_bits=8, total_bits=16):
+    scale = 2 ** fractional_bits
+    lower = -(2 ** (total_bits - 1))
+    upper = 2 ** (total_bits - 1) - 1
+    code = round(x * scale)
+    code = max(lower, min(upper, code))
+    return code / scale
 ```
 
-这个函数会在 06 章变成"伪量化"训练算子的核心。
+Always specify whether the sign bit is included in the reported width; fixed-point naming conventions vary.
 
-## 5.6 权重量化 vs 激活量化,per-tensor vs per-channel
+## 5.6 Weight and activation granularity
 
-- **权重量化**:训练完就固定了,可以离线算好每个通道的最优缩放系数(scale),
-  精度损失相对可控。常见做法是**逐输出通道**(per-output-channel)对称量化:
-  每一路输出神经元/卷积核用自己的 scale,比"整个权重矩阵共用一个 scale"精度更好,
-  硬件上的代价只是多存几个 scale 值(通常用 BRAM 存一个小表),不显著增加复杂度。
-- **激活量化**:每次前向都要重新量化(输入不固定),所以通常用**统一的 Qm.n 格式**
-  (per-tensor,不分通道),简化硬件实现——所有中间结果都落在同一个定点网格上,
-  加法器、比较器可以直接复用,不用为每个通道维护不同的定点格式。
+Per-output-channel symmetric weight scales usually preserve accuracy better than one scale for an entire matrix. Weights are static, so the additional scale table is small. Activations change for every sample; a single fixed Q-format is easier to implement and compose across operators.
 
-## 5.7 本章小结,下一步要做什么
+## 5.7 Deployment sequence
 
-量化不是"把 `torch.quantize` 调用一下"这么简单,而是一整套系统设计决定:
+1. Replace LayerNorm, GELU, Softmax, and variable division.
+2. Fine-tune the modified graph with QAT.
+3. Export integer codes and explicit scales.
+4. Verify the complete fixed-point path with a PyTorch-independent NumPy implementation.
+5. Estimate memory, then run synthesis and implementation for actual LUT, FF, BRAM, DSP, timing, and latency results.
 
-1. 先把 LayerNorm / GELU / Softmax / 除法这些"贵"的浮点算子换成硬件友好的等价物(06 章)
-2. 在新的算子图上做 QAT,让网络重新适应定点精度(06 章)
-3. 导出真正的定点权重(不是"伪量化过的浮点数",而是实际的整数编码 + scale),
-   并用一份不依赖 PyTorch 的纯 numpy 实现验证它和训练时位对位一致(07 章)
-4. 做资源估算,诚实地说清楚哪些数字是真算出来的、哪些还需要真正跑综合工具才能确认(08 章)
-
-下一步: [06-hw-friendly-ops-qat.md](06-hw-friendly-ops-qat.md)
+Next: [06-hw-friendly-ops-qat.md](06-hw-friendly-ops-qat.md)

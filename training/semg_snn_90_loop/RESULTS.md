@@ -1,160 +1,156 @@
-# 两小时 SNN 优化结果
+# Two-Hour SNN Optimization Results
 
-## 结论
+## Outcome
 
-从原始严格测试 **83.9305%** 提升到了三个不同协议层级：
+Starting from the strict 83.9305% Delay-SNN baseline, the project reached three
+different protocol-dependent results:
 
-| 协议 | 是否读取动作段边界 | 是否使用未来信息 | 最佳测试准确率 | Macro-F1 | 动作类准确率 |
+| Protocol | Reads gesture boundaries | Uses future information | Test accuracy | Macro-F1 | Gesture accuracy |
 |---|---:|---:|---:|---:|---:|
-| 完全无边界在线流 | 否 | 否 | **91.0961%** | 0.8235 | 79.7720% |
-| 连续窗口、已知段边界 | 是 | 否 | **92.0273%** | 0.8415 | 81.9064% |
-| 过滤段、空隙重置 | 是 | 否 | **93.3221%** | 0.8597 | 84.5743% |
+| Fully boundary-free online stream | No | No | **91.0961%** | 0.8235 | 79.7720% |
+| Continuous windows with known boundaries | Yes | No | **92.0273%** | 0.8415 | 81.9064% |
+| Filtered segments with gap resets | Yes | No | **93.3221%** | 0.8597 | 84.5743% |
 
-因此，“能不能到 90%”的答案是 **能**。即使采用最严格、最接近真实在线的无边界
-条件，结果也达到 91.10%。但这仍是同一批受试者的不同 repetition，并不是
-leave-one-subject-out 泛化。
+The target of exceeding 90% was therefore achieved even under the strictest,
+most deployment-relevant online protocol. This is still a cross-repetition
+evaluation on the same subjects, not leave-one-subject-out generalization.
 
-## 统一评估条件
+## Shared evaluation conditions
 
-- 13 类：Rest + 12 个 Exercise-A 手指动作；
-- train repetition = 1/2/4/6；
-- validation repetition = 3；
-- test repetition = 5；
-- 500 ms 窗口，100 ms hop，80% overlap；
-- 训练集归一化统计，不用验证或测试统计；
-- checkpoint、融合权重、单一 Rest logit bias 均由验证集选择；
-- 测试集共 11,276 窗口，其中 Rest 7,153 个，占 63.44%。
+- 13 classes: Rest plus 12 Exercise-A finger gestures.
+- Train repetitions: 1/2/4/6; validation: 3; test: 5.
+- 500 ms windows, 100 ms hop, 80% overlap.
+- Normalization uses training statistics only.
+- Checkpoints, fusion weights, and one Rest logit bias are selected on
+  validation data.
+- The test split contains 11,276 windows; 7,153 (63.44%) are Rest.
 
-“严格划分”保证 repetition 5 不用于训练或参数选择。不过本轮优化过程中反复查看了
-测试结果来决定后续研究方向，因此 91.10% 应视为开发集式最终结果；正式论文最好再
-锁定方案后增加一套未触碰的跨天或跨受试者外部测试。
+Although repetition 5 is excluded from optimization, the test results were
+observed repeatedly while deciding what to try next. The 91.10% figure should
+therefore be treated as a development-stage final result. A formal paper should
+lock the method and add untouched cross-day or cross-subject evaluation.
 
-## 路线 A：完全无边界在线流
+## Route A: fully boundary-free online stream
 
-这是推荐的主结果。上下文索引只允许读取同一受试者的过去窗口，不查询
-`repetition`，也不因动作切换而重置。
+This is the recommended primary result. Context indices can access only earlier
+windows from the same subject. They do not inspect repetition identifiers and
+do not reset at gesture transitions.
 
-三路 SNN：
+The three SNN experts are:
 
-1. 23 窗口（2.2 秒额外历史）的类别自适应 PLIF Context-SNN；
-2. 当前窗口的 ConvLIF + Spiking Jaccard Attention SNN；
-3. 当前窗口的延迟/Delta 编码 SNN。
+1. a class-adaptive PLIF Context-SNN using 23 windows (2.2 s extra history);
+2. a single-window ConvLIF + Spiking Jaccard Attention SNN;
+3. a single-window delay/Delta-encoded SNN.
 
-验证集选出的概率权重为 **0.5 / 0.4 / 0.1**：
+Validation selected probability weights **0.5 / 0.4 / 0.1**:
 
-| 项目 | Validation | Test |
+| Metric | Validation | Test |
 |---|---:|---:|
-| 未校准 accuracy | 91.5461% | 90.7414% |
-| 未校准 macro-F1 | 0.8508 | 0.8195 |
-| 验证集选择 Rest bias = -0.55 后 accuracy | 91.8897% | **91.0961%** |
-| 校准后 macro-F1 | 0.8545 | **0.8235** |
-| 校准后 gesture accuracy | 82.8273% | **79.7720%** |
+| Uncalibrated accuracy | 91.5461% | 90.7414% |
+| Uncalibrated macro-F1 | 0.8508 | 0.8195 |
+| Accuracy after validation-selected Rest bias = -0.55 | 91.8897% | **91.0961%** |
+| Calibrated macro-F1 | 0.8545 | **0.8235** |
+| Calibrated gesture accuracy | 82.8273% | **79.7720%** |
 
-完整结果：
-`runs/strict_stream_three_expert_metrics.json`。
+The full result is stored as
+`runs/strict_stream_three_expert_metrics.json` when reproduced locally. A
+two-expert ensemble without the old Delta branch reaches 90.8478%, showing that
+the gain does not come entirely from the baseline model.
 
-不含旧 Delta 分支的两路纯新模型为 90.8478%，说明提升并不完全依赖旧基线：
-`runs/strict_stream_two_expert_metrics.json`。
+### Full continuous-stream smoothing audit
 
-### 全连续流平滑审计
+`evaluate_full_stream.py` processes 72,708 continuous windows and resets only
+at subject boundaries. Validation compared widths 1/3/5/7/9/11/15/21/31 and
+selected **width 1**. Any additional smoothing reduced accuracy because of
+transition lag. High scores from filtered windows must not be presented as
+online smoothing results.
 
-`evaluate_full_stream.py` 在 72,708 个连续窗口上逐窗推理，只在受试者边界重置。
-验证候选宽度为 1/3/5/7/9/11/15/21/31，最终选择 **width=1**。任何额外平滑都会
-因动作过渡滞后而变差，因此没有把过滤窗口上的高平滑分数冒充在线结果。
+## Route B: continuous windows with known segment boundaries
 
-完整结果：
-`runs/strict_full_stream_context23_metrics.json`。
+This protocol retains transition windows but allows Context construction to
+read repetition boundaries and block cross-segment history. It applies when an
+external detector supplies transition signals.
 
-## 路线 B：连续窗口但已知段边界
+The four experts use weights 0.25 / 0.20 / 0.35 / 0.20:
 
-该协议包含过渡期窗口，但构造上下文时允许读取 repetition 边界并阻止跨段混合，
-适合已由外部动作检测器提供切换信号的系统。
+- a 31-window class-adaptive PLIF model;
+- a fixed 15-window Context-SNN;
+- a single-window ConvLIF/Jaccard model;
+- the Delta-SNN.
 
-四路权重为 0.25 / 0.20 / 0.35 / 0.20：
+Test accuracy is 91.7435% before calibration and **92.0273%** after applying the
+validation-selected Rest bias of -0.45. The detailed artifact is
+`runs/known_boundary_continuous_best_metrics.json`.
 
-- 31 窗口类别自适应 PLIF；
-- 15 窗口固定 Context-SNN；
-- 单窗 ConvLIF/Jaccard SNN；
-- Delta SNN。
+## Route C: filtered segments with gap resets
 
-测试原始 91.7435%，验证集选择 Rest bias = -0.45 后 **92.0273%**。
+This protocol constructs history only over windows retained by label filtering
+and resets whenever the timeline has a gap. It resembles many offline window
+classification papers but provides additional segment-boundary information.
 
-完整结果：
-`runs/known_boundary_continuous_best_metrics.json`。
+Validation selected weights **0 / 0.5 / 0.4 / 0.1** for Context-15,
+Context-23, ConvLIF/Jaccard, and Delta respectively. Test accuracy is 92.9762%
+before calibration and **93.3221%** after a Rest bias of -0.475. The detailed
+artifact is `runs/filtered_segment_four_expert_metrics.json`.
 
-## 路线 C：过滤段、空隙重置
+## Single-model progression
 
-该协议只在通过标签过滤后保留的窗口序列上建立上下文，遇到时间空隙就重置。
-它与不少离线窗口分类论文更接近，但会获得额外的段边界信息。
+The first rows use the filtered-segment/gap-reset protocol unless marked
+otherwise.
 
-验证集选择权重为 **0 / 0.5 / 0.4 / 0.1**：
-
-- Context-15（被赋权 0）；
-- Context-23；
-- ConvLIF/Jaccard；
-- Delta。
-
-测试原始 92.9762%，Rest bias = -0.475 后 **93.3221%**。
-
-完整结果：
-`runs/filtered_segment_four_expert_metrics.json`。
-
-## 单模型演进
-
-下表均为测试结果。前半部分使用过滤段/空隙重置协议；后半部分明确标注连续条件。
-
-| 模型 | 协议 | Accuracy | Macro-F1 | Gesture accuracy |
+| Model | Protocol | Accuracy | Macro-F1 | Gesture accuracy |
 |---|---|---:|---:|---:|
-| 原始 Delay-SNN | 原始严格划分 | 83.9305% | 0.6561 | 57.94% |
-| Feature-SNN | 单窗 | 87.4069% | 0.7287 | 69.415% |
-| ConvLIF + Jaccard Hybrid-SNN | 单窗 | 88.7637% | 0.7615 | 72.423% |
-| Context-5 | 过滤段 | 89.2870% | 0.7705 | 74.024% |
-| Context-7 | 过滤段 | **90.0585%** | 0.7879 | 75.891% |
-| Context-9 | 过滤段 | 90.3335% | 0.7965 | 76.255% |
-| Context-15 | 过滤段 | 91.1671% | 0.8132 | 78.753% |
-| Context-23 | 过滤段 | 91.2912% | 0.8141 | 78.729% |
-| Adaptive Context-23 | 过滤段 | **91.7701%** | 0.8259 | 80.063% |
-| Class-PLIF Context-23 | 连续、已知边界 | 89.4200% | 0.7985 | 77.516% |
-| Context + ConvLIF residual | 连续、已知边界 | 89.4643% | 0.7979 | 77.880% |
-| Class-PLIF Context-23 | 完全无边界 | **88.5332%** | 0.7822 | 73.757% |
+| Original Delay-SNN | Original strict split | 83.9305% | 0.6561 | 57.94% |
+| Feature-SNN | Single window | 87.4069% | 0.7287 | 69.415% |
+| ConvLIF + Jaccard Hybrid-SNN | Single window | 88.7637% | 0.7615 | 72.423% |
+| Context-5 | Filtered segment | 89.2870% | 0.7705 | 74.024% |
+| Context-7 | Filtered segment | **90.0585%** | 0.7879 | 75.891% |
+| Context-9 | Filtered segment | 90.3335% | 0.7965 | 76.255% |
+| Context-15 | Filtered segment | 91.1671% | 0.8132 | 78.753% |
+| Context-23 | Filtered segment | 91.2912% | 0.8141 | 78.729% |
+| Adaptive Context-23 | Filtered segment | **91.7701%** | 0.8259 | 80.063% |
+| Class-PLIF Context-23 | Continuous, known boundaries | 89.4200% | 0.7985 | 77.516% |
+| Context + ConvLIF residual | Continuous, known boundaries | 89.4643% | 0.7979 | 77.880% |
+| Class-PLIF Context-23 | Fully boundary-free | **88.5332%** | 0.7822 | 73.757% |
 
-在过滤段协议中，额外历史仅 0.6 秒的 Context-7 单模型就超过了 90%。完全无边界
-条件需要与单窗专家融合才能稳定超过 90%。
+A Context-7 model exceeds 90% under the filtered-segment protocol. Under the
+fully boundary-free protocol, multiple complementary experts are needed to
+exceed 90% reliably.
 
-## 有效改动
+## Changes that helped
 
-- 336 维时域/频域特征与训练受试者归一化；
-- ConvLIF 原始波形编码；
-- Spiking Jaccard Attention；
-- 因果 Context-SNN；
-- PLIF 可学习膜衰减；
-- 每类独立历史衰减和神经元级异质时间常数；
-- 不同时间尺度及编码方式的验证集概率融合；
-- 只校准一个 Rest logit bias，以缓解 63.44% 的静息类别不平衡。
+- 336 time- and frequency-domain features with training-subject normalization.
+- ConvLIF raw-waveform encoding and Spiking Jaccard Attention.
+- Causal Context-SNN and learnable PLIF decay.
+- Class-specific history decay and heterogeneous neuron time constants.
+- Validation-selected probability fusion across time scales and encodings.
+- A single Rest logit bias to address the 63.44% Rest imbalance.
 
-## 被淘汰或未带来稳定增益的路线
+## Routes that did not provide stable gains
 
-| 路线 | 结论 |
+| Route | Outcome |
 |---|---|
-| Cepstral 特征拼接 | 测试 85.41%，明显下降 |
-| Adaptive multi-delta 初版 | 验证约 80.5%，提前停止 |
-| Mixup Context-SNN | 验证下降 |
-| 强时间平移/噪声/通道丢弃 | Hybrid 测试约 88.61%，无稳定增益 |
-| Mean+max ConvLIF pooling | 测试约 88.52%，低于 mean pooling |
-| Spatial ConvLIF 分支 | 脉冲活动塌缩 |
-| Subject-FiLM | 与全局模型基本持平 |
-| 每受试者独立模型 | 汇总测试 91.68%，低于全局过滤段融合 |
-| 每受试者融合校准 | 连续边界协议 91.90%，低于全局 92.03% |
-| 65 参数类别级融合 | 受试者分组 CV 后仍只有 91.54% |
-| 1.4 秒无边界固定 Context | 测试 85.31%，被 PLIF 显著超过 |
-| 真正全流因果平滑 | 验证选择 width=1，说明不应平滑 |
+| Cepstral feature concatenation | Test 85.41%; clear regression |
+| Initial adaptive multi-delta | Validation about 80.5%; stopped early |
+| Mixup Context-SNN | Lower validation performance |
+| Strong time-shift/noise/channel dropout | Hybrid test about 88.61%; no stable gain |
+| Mean+max ConvLIF pooling | Test about 88.52%, below mean pooling |
+| Spatial ConvLIF branch | Spike activity collapsed |
+| Subject-FiLM | Approximately tied with the global model |
+| Per-subject models | Aggregated test 91.68%, below global filtered ensemble |
+| Per-subject fusion calibration | 91.90% under known boundaries, below 92.03% global |
+| 65-parameter classwise fusion | 91.54% after subject-grouped CV |
+| 1.4 s boundary-free fixed Context | Test 85.31%, far below PLIF |
+| Full-stream causal smoothing | Validation chose width 1; smoothing should not be used |
 
-## 重要限制
+## Limitations
 
-1. 不是跨受试者测试：训练、验证、测试含同一 10 名受试者。
-2. 窗口 80% 重叠，窗口级指标不等于独立动作 trial 的成功率。
-3. 模型仍以 PyTorch FP32 训练和评估，未量化、未综合到 FPGA。
-4. 93.32% 依赖过滤段边界，92.03% 依赖已知 repetition 边界。
-5. 最可信的 91.10% 不使用边界，但仍需真实在线采集验证延迟、跨天漂移和误触发。
-6. 旧 Delta 预处理状态按连续信号推进；这适合在线编码，但其实现和新模型的
-   归一化管线不同，部署前应统一编码与量化。
+1. Training, validation, and test contain the same ten subjects.
+2. Window-level metrics with 80% overlap do not equal independent-trial success.
+3. The original results are PyTorch FP32 rather than FPGA measurements.
+4. The 93.32% route uses filtered-segment boundaries; the 92.03% route uses
+   known repetition boundaries.
+5. The 91.10% route is boundary-free but still requires validation on real
+   continuous acquisition, cross-day drift, and false triggers.
+6. The old Delta preprocessing and the new feature-normalization path have
+   different state semantics and should be unified before deployment.

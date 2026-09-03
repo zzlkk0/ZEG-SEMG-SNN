@@ -1,49 +1,55 @@
 # ZEG-SEMG-SNN
 
-面向 NinaPro DB5 表面肌电（sEMG）13 类手势识别的 SNN 研究与教学代码。
+Research and teaching code for 13-class surface electromyography (sEMG)
+gesture recognition on NinaPro DB5 using spiking neural networks (SNNs).
 
-仓库包含从基础 Delay-SNN 复现、Context/Hybrid 多分支优化、SNN-LSTM 与
-RF-SNN 对照实验，到硬件友好 QAT、定点参考实现和 FPGA 部署教学的完整代码脉络。
+The repository covers the full progression from a baseline Delay-SNN
+reproduction through Context/Hybrid multi-branch optimization, SNN-LSTM and
+RF-SNN comparisons, hardware-friendly quantization-aware training (QAT),
+fixed-point reference inference, and FPGA deployment tutorials.
 
-> 本仓库不包含 NinaPro 数据、训练 checkpoint、导出权重或 bitstream。
-> 文中准确率是特定数据划分下的软件实验结果，除非明确提供实板证据，否则不能
-> 称为 FPGA 实测结果。
+> This repository does not contain NinaPro data, trained checkpoints, exported
+> weights, or bitstreams. Accuracy values are software results under a specific
+> split unless physical-board evidence is explicitly provided.
 
-## 主要结果
+## Main results
 
-所有主要结果使用 NinaPro DB5 Exercise 1：Rest + 12 个动作，16 通道、200 Hz，
-500 ms 窗口、100 ms hop。训练 repetition 为 1/2/4/6，验证为 3，测试为 5。
+The main experiments use NinaPro DB5 Exercise 1: Rest plus 12 gestures,
+16 channels at 200 Hz, 500 ms windows, and a 100 ms hop. Repetitions 1/2/4/6
+are used for training, repetition 3 for validation, and repetition 5 for test.
 
-| 路线 | 测试准确率 | 说明 |
+| Route | Test accuracy | Interpretation |
 |---|---:|---|
-| Delay-SNN | 83.93% | 可学习轴突延迟，纯 PyTorch SNN |
-| SNN-LSTM 最佳实验 | 83.84% | 未超过 Delay-SNN |
-| RF-SNN 严格划分 | 80.24% | 52 点 RF80 实验 |
-| Context + Hybrid + Delay | **91.10%** | 无动作边界、无未来信息的软件 FP32 主结果 |
-| 硬件友好 QAT 三分支 | **91.11%** | 定点/查表语义的软件参考结果，不是 RTL/FPGA 测量 |
+| Delay-SNN | 83.93% | Pure PyTorch SNN with learnable axonal delays |
+| Best SNN-LSTM experiment | 83.84% | Did not outperform Delay-SNN |
+| RF-SNN, strict split | 80.24% | 52-sample RF80 experiment |
+| Context + Hybrid + Delay | **91.10%** | FP32 software result without gesture boundaries or future information |
+| Hardware-friendly QAT ensemble | **91.11%** | Fixed-point/LUT software reference; not an RTL or FPGA measurement |
 
-这是相同受试者的跨 repetition 测试，不是 leave-one-subject-out；测试窗也有
-80% 重叠。请同时阅读每个实验目录中的 `RESULTS.md`，不要脱离协议引用数字。
+This is a cross-repetition evaluation on the same subjects, not
+leave-one-subject-out evaluation. Windows overlap by 80%. Read each experiment's
+`RESULTS.md` before citing a number outside its protocol.
 
-## 仓库结构
+## Repository layout
 
 ```text
 docs/
-  tutorial/                     从 SNN 基础到 FPGA 部署的 8 章中文教程与 notebooks
-  specifications/               硬件友好重训和 Delay 分支接口说明
+  tutorial/                     Eight English chapters and notebooks, from SNN basics to FPGA deployment
+  specifications/               Hardware-friendly retraining and Delay branch interface specifications
 training/
-  semg_snn_fpga_reproduction/   Delay-SNN 论文方法的软件复现
-  semg_snn_90_loop/             Context/Hybrid/三分支融合、QAT、定点导出
-  semg_snn_lstm/                SNN-LSTM 对照实验
-  semg_rf_snn/                  RF-SNN 对照实验
+  semg_snn_fpga_reproduction/   Software reproduction of the Delay-SNN method
+  semg_snn_90_loop/             Context/Hybrid training, ensemble evaluation, QAT, and fixed-point export
+  semg_snn_lstm/                SNN-LSTM comparison experiments
+  semg_rf_snn/                  RF-SNN comparison experiments
 scripts/
-  sanitize_notebooks.py         清除 notebook 输出及本机路径
+  sanitize_notebooks.py         Removes notebook outputs and workstation paths
 ```
 
-## 快速开始
+## Quick start
 
-建议 Python 3.10–3.12。PyTorch 的 CUDA 安装方式取决于系统和驱动；若需要 GPU，
-优先按 PyTorch 官方安装器选择匹配版本，再安装其余依赖。
+Python 3.10–3.12 is recommended. CUDA installation depends on the host driver;
+for GPU use, install an appropriate PyTorch build first and then install the
+remaining dependencies.
 
 ```bash
 git clone https://github.com/zzlkk0/ZEG-SEMG-SNN.git
@@ -55,27 +61,28 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-先运行不需要数据的语法检查：
+Run checks that do not require the dataset:
 
 ```bash
 python -m compileall -q training
 python scripts/check_public_release.py
 ```
 
-从教程开始：
+Start with the tutorials:
 
 ```bash
 python -m pip install -r requirements-notebooks.txt
 jupyter lab
 ```
 
-打开 [`docs/tutorial/00-README.md`](docs/tutorial/00-README.md)。01–08 章中的
-合成数据示例可以独立学习；`docs/tutorial/notebooks/` 的真实项目案例需要按
-[`DATASET.md`](DATASET.md) 准备 NinaPro DB5 数据和 checkpoint。
+Open [`docs/tutorial/00-README.md`](docs/tutorial/00-README.md). The synthetic
+examples in Chapters 01–08 are self-contained. The real-project notebooks in
+`docs/tutorial/notebooks/` require NinaPro DB5 data and checkpoints as described
+in [`DATASET.md`](DATASET.md).
 
-## 训练入口
+## Training entry points
 
-基础 Delay-SNN：
+Baseline Delay-SNN:
 
 ```bash
 cd training/semg_snn_fpga_reproduction
@@ -83,7 +90,7 @@ python prepare_db5.py --input-dir data/extracted --output-dir data/processed
 python train.py --epochs 100 --run-dir runs/baseline
 ```
 
-Context/Hybrid 主线：
+Context/Hybrid main route:
 
 ```bash
 cd training/semg_snn_90_loop
@@ -102,7 +109,7 @@ python train.py \
   --run-name context23_class_plif_stream
 ```
 
-硬件友好 QAT：
+Hardware-friendly QAT:
 
 ```bash
 cd training/semg_snn_90_loop
@@ -111,32 +118,36 @@ python export_hw_fixed.py --help
 python evaluate_hw_ensemble.py --help
 ```
 
-每个子工程的 README 给出了更完整的命令、模型初始化关系和评估方式。
+Each subproject README documents its initialization dependencies, complete
+training commands, and evaluation procedure.
 
-## 复现原则
+## Reproducibility rules
 
-- 只用训练 repetition 计算归一化统计。
-- 用验证集选择 checkpoint、融合权重和 Rest bias。
-- 测试集只做最终报告，不用来调参。
-- 同时报告 accuracy、macro-F1 和非 Rest 手势准确率。
-- 明确区分 FP32、QAT/定点参考、HLS/RTL 仿真与实板结果。
-- 新实验使用新的 `runs/<name>`，不要覆盖原结果。
+- Compute normalization statistics from training repetitions only.
+- Select checkpoints, ensemble weights, and the Rest bias on validation data.
+- Use the test split for final reporting, not hyperparameter tuning.
+- Report accuracy, macro-F1, and non-Rest gesture accuracy together.
+- Distinguish FP32, QAT/fixed-point reference, HLS/RTL simulation, and physical
+  FPGA measurements.
+- Use a new `runs/<name>` directory for each experiment.
 
-## 数据和模型文件
+## Data and generated models
 
-NinaPro 数据及训练生成物未上传。所需目录、文件格式和下载注意事项见
-[`DATASET.md`](DATASET.md)。`.gitignore` 会阻止常见数据、checkpoint、权重、
-bitstream 和工具构建目录被误提交。
+NinaPro data and training artifacts are intentionally excluded. See
+[`DATASET.md`](DATASET.md) for the expected layout and preparation steps.
+`.gitignore` blocks common datasets, checkpoints, exported weights, bitstreams,
+and tool-generated build directories.
 
-## 文献与限制
+## References and limitations
 
-Delay-SNN 复现参考：
+The Delay-SNN reproduction is based on:
 
 > M. A. Scrugli, G. Leone, P. Busia, P. Meloni,
 > “sEMG-Based Gesture Recognition with Spiking Neural Networks on Low-Power FPGA,”
 > DASIP 2024. DOI: 10.1007/978-3-031-62874-0_2.
 
-RF-SNN 的研究背景和复现差异见
-[`training/semg_rf_snn/RESEARCH.md`](training/semg_rf_snn/RESEARCH.md)。
+See [`training/semg_rf_snn/RESEARCH.md`](training/semg_rf_snn/RESEARCH.md) for
+the RF-SNN background and known reproduction differences.
 
-本仓库当前没有附带许可证。在许可证明确之前，请勿假定代码可用于商业用途。
+No license is included yet. Do not assume permission for commercial use until
+a license is explicitly added.

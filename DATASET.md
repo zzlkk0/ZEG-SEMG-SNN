@@ -1,43 +1,46 @@
-# 数据与模型文件说明
+# Data and Model Files
 
-## 为什么仓库不包含数据和 checkpoint
+## Why data and checkpoints are excluded
 
-NinaPro DB5 数据受其发布方条款约束，文件体积也不适合直接提交到 Git。
-训练 checkpoint、处理后的窗口、导出权重和 bitstream 都是可重新生成的产物，
-因此本仓库只发布源代码、教学文档和不含个人样本的结果说明。
+NinaPro DB5 is subject to the dataset publisher's terms, and the files are too
+large for ordinary Git history. Trained checkpoints, processed windows,
+exported weights, and bitstreams are reproducible artifacts, so this repository
+contains source code, documentation, and aggregate results only.
 
-请从 NinaPro 官方渠道获取 DB5，并遵守其引用和使用条件。不要把原始受试者数据
-或重新打包的数据集提交到本仓库。
+Obtain DB5 through the official NinaPro distribution channel and comply with
+its citation and usage requirements. Do not commit raw participant data or a
+repackaged copy of the dataset to this repository.
 
-## 推荐目录
+## Expected layout
 
 ```text
 training/semg_snn_fpga_reproduction/
   data/
-    extracted/        DB5 解压后的 MATLAB 文件
-    processed/        prepare_db5.py 生成的 train/val/test.npz
-  runs/               checkpoint 与指标
+    extracted/        Extracted DB5 MATLAB files
+    processed/        train/val/test.npz produced by prepare_db5.py
+  runs/               Checkpoints and metrics
 
 training/semg_snn_90_loop/
-  data/               prepare.py 生成的特征数据
-  runs/               Context、Hybrid 和 QAT checkpoint/指标
-  weights_hw/         定点导出包与黄金向量
+  data/               Features produced by prepare.py
+  runs/               Context, Hybrid, and QAT checkpoints/metrics
+  weights_hw/         Fixed-point exports and golden vectors
 ```
 
-这些目录均已被 `.gitignore` 排除。
+These directories are excluded by `.gitignore`.
 
-## 固定划分
+## Fixed evaluation split
 
-| Split | Repetitions | 窗口数 |
+| Split | Repetitions | Windows |
 |---|---|---:|
 | Train | 1, 2, 4, 6 | 44,630 |
 | Validation | 3 | 11,060 |
 | Test | 5 | 11,276 |
 
-窗口为 100 点，shift 为 20 点，从每段记录的第 400 点以后开始。动作窗要求至少
-80% 标签一致，Rest 窗要求全部为 0。
+Windows contain 100 samples with a shift of 20 samples and begin after sample
+400 of each recording. Gesture windows require at least 80% label agreement;
+Rest windows must contain label 0 throughout.
 
-## 准备数据
+## Data preparation
 
 ```bash
 cd training/semg_snn_fpga_reproduction
@@ -50,14 +53,18 @@ python prepare.py
 python prepare_continuous_context.py
 ```
 
-部分优化脚本会读取相邻的 `semg_snn_fpga_reproduction/data/processed`。保持
-仓库默认目录结构即可，无需修改源码。
+Some optimization scripts read the adjacent
+`semg_snn_fpga_reproduction/data/processed` directory. Keep the default
+repository layout and no source changes should be required.
 
-## 隐私要求
+## Privacy requirements
 
-若使用自行采集的 sEMG：
+When using newly collected sEMG data:
 
-- 不提交原始受试者记录、姓名、编号映射、同意书或设备序列号；
-- 在发布统计前确认伦理审批与受试者授权范围；
-- 公开示例优先使用合成数据或经授权的匿名小样本；
-- 日志中不要记录本机绝对路径、用户名或访问令牌。
+- Do not commit raw participant recordings, names, identifier maps, consent
+  forms, or device serial numbers.
+- Confirm the ethics approval and participant authorization before publishing
+  statistics.
+- Prefer synthetic data or explicitly authorized anonymized samples for public
+  examples.
+- Do not record local absolute paths, usernames, or access tokens in logs.
